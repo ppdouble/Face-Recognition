@@ -14,6 +14,15 @@ class loadFacePoints;
 
 using namespace cv;
 
+double getSimilarity (const Mat A, const Mat B) {
+    // less than 0.2 if image not move during capture process
+    // higher than 0.4 if image move during capture process
+    // set 0.3
+    double errorL2 = norm(A, B, NORM_L2);
+    double similarity = errorL2 / (double)(A.rows * A.cols);
+    return similarity;
+
+}
 int main( int argc, char** argv )
 {
     // face detect
@@ -42,6 +51,8 @@ int main( int argc, char** argv )
 
     Mat gray, img;
     img = cameraFrame;  // original face image stores in img
+    imshow("original image", img);
+    waitKey(0);
     /*
     VideoCapture camera2 = VideoCapture(0);
     camera2.read(img);
@@ -95,16 +106,19 @@ int main( int argc, char** argv )
     std::cout << facesRectvector.size();
     if (facesRectvector[0].width > 0) {
         std::cout << "We detected a face!" <<std::endl;
+    } else {
+        std::cout << "Failed to detect face " << std::endl;
+        exit(-1);
     }
 
     //imshow("ddd", equalizedImg);
     //waitKey(0);
-    Mat faceImg1 = equalizedImg(facesRectvector[0]);
-    imshow("ddd Rect", faceImg1);
+    Mat faceImg = equalizedImg(facesRectvector[0]);
+    imshow("normal process detected face", faceImg);
     waitKey(0);
-    imshow("ddd Rect", img(facesRectvector[0]));
+    imshow("detected face area by original", img(facesRectvector[0]));
     waitKey(0);
-
+/*
     // how to enlarge
     std::vector<Rect> objects;  // only one image
     objects = facesRectvector;
@@ -127,14 +141,14 @@ int main( int argc, char** argv )
         objects[0].y = img.rows - objects[0].height;
     }
 
-    imshow("eee Rect", img(objects[0]));
+    imshow("no resize enlarge", img(objects[0]));
     waitKey(0);
 
     Mat faceImg;
     resize(equalizedImg, faceImg, Size(objects[0].width, objects[0].height));
-    imshow("eee Rect", faceImg);
+    imshow("resize enlarge", faceImg);
     waitKey(0);
-    
+*/
     // Face preprocessing
     // Eye detect
     // search Region of left eye and right eye
@@ -196,12 +210,100 @@ int main( int argc, char** argv )
     }
     if (leftEye.x >= 0 && rightEye.x >=0) {
         std::cout << "Detected both eyes." << std::endl;
+    } else {
+        std::cout << "Failed to detect eyes" << std::endl;
+        exit(-1);
     }
     imshow("lefteye", faceImg(leftEyeRect[0]));
     imshow("righteye", faceImg(rightEyeRect[0]));
     waitKey(0);
 
+    // eyes geometrical transformation
+    Point2f eyesCenter; // caculating eyes' center
+    eyesCenter.x = (leftEye.x + rightEye.x) * 0.5f;
+    eyesCenter.y = (leftEye.y + rightEye.y) * 0.5f;
 
+    double dy = (rightEye.y - leftEye.y);
+    double dx = (rightEye.x - leftEye.x);
+    double len = sqrt(dx*dx + dy*dy); // length between lefteye center and righteye center
+    double angle = atan2(dy, dx) * 180.0/CV_PI; // caculating the angle
+
+    // Hand measurements ?? experience?? eye center should ideally be roughly at (0.16, 0.14) of a scaled face image
+    const double DESIRED_LEFT_EYE_X = 0.16;
+    const double DESIRED_RIGHT_EYE_X = (1.0f - 0.16);
+    const double DESIRED_LEFT_EYE_Y = 0.14;
+    const int DESIRED_FACE_WIDTH = 70;
+    const int DESIRED_FACE_HEIGHT = 70;
+    double desiredLen = (DESIRED_RIGHT_EYE_X - 0.16);
+    double newscale = desiredLen * DESIRED_FACE_WIDTH / len;
+
+    Mat rot_mat = getRotationMatrix2D(eyesCenter, angle, newscale); // rotation matrix
+    double ex = DESIRED_FACE_WIDTH * 0.5f - eyesCenter.x;   // shift new center on desired face
+    double ey = DESIRED_FACE_HEIGHT * DESIRED_LEFT_EYE_Y - eyesCenter.y;
+    rot_mat.at<double>(0, 2) += ex;
+    rot_mat.at<double>(1,2) += ey;
+    Mat warped = Mat(DESIRED_FACE_HEIGHT, DESIRED_FACE_WIDTH, CV_8U, Scalar(128));  // empty face with gray color
+    warpAffine(faceImg, warped, rot_mat, warped.size()); // rotation
+    imshow("rotation", warped);
+    waitKey(0);
+
+    // histogram equalizaton seperately
+    int w = warped.cols;
+    int h = warped.cols;
+    Mat wholeFace;
+    equalizeHist(warped, wholeFace);
+    int midX = w/2;
+    Mat leftSide = warped(Rect(0,0,midX,h));
+    Mat rightSide = warped(Rect(midX,0,w-midX,h));
+    equalizeHist(leftSide, leftSide);   // equalize leftSide and stored into leftSide
+    equalizeHist(rightSide, rightSide);
+    imshow("whole sep equ", warped);
+    imshow("left sep equ", leftSide);
+    imshow("right sep equ", rightSide);
+    waitKey(0);
+    //combine three parts together
+    for (int y=0; y<h; y++) {
+        for (int x=0; x<w; x++) {
+            int v;
+            if (x < w/4) {
+                v = leftSide.at<uchar>(y, x);    // Left 25%
+            } else if (x < w*2/4) { // Mid Left 25%
+                int lv = leftSide.at<uchar>(y, x);
+                int wv = wholeFace.at<uchar>(y, x);
+                float f = (x - w*1/4) / (float)(w/4);
+                v = cvRound((1.0f - f)*lv + f * wv);    // weighted by f
+            } else if (x < w*3/4) { // Mid Right 25%
+                int rv = rightSide.at<uchar>(y, x-midX);
+                int wv = wholeFace.at<uchar>(y, x);
+                float f = (x - w*2/4)/(float)(w/4);
+                v = cvRound((1.0f - f) * wv + f * rv);
+            } else {
+                v = rightSide.at<uchar>(y, x-midX); // Right 25%
+            }
+            warped.at<uchar>(y, x) = v;
+        }
+    }
+    imshow("merge equ", warped);
+    waitKey(0);
+
+    // Smoothing
+    Mat filtered = Mat(warped.size(), CV_8U);
+    bilateralFilter(warped, filtered, 0, 20.0, 2.0);
+    imshow("smoothing", filtered);
+    waitKey(0);
+    // elliptical mask
+    // create ellipse mask
+    Mat mask = Mat(filtered.size(), CV_8UC1, Scalar(255));
+    double dw = DESIRED_FACE_WIDTH;
+    double dh = DESIRED_FACE_HEIGHT;
+    Point faceCenter = Point(cvRound(dw * 0.5), cvRound((dh * 0.4)));   // ellipse center
+    Size size = Size(cvRound(dw * 0.5), cvRound(dh * 0.8)); // ellipse size
+    ellipse(mask, faceCenter, size, 0, 0, 360, Scalar(0), FILLED);  // create ellipse mask with black color
+    imshow("mask", mask);
+    waitKey(0);
+    filtered.setTo(Scalar(128), mask);  // applied mask on face image
+    imshow("mergemask", filtered);
+    waitKey(0);
     /*
     int num_components = 10;;
     double threshold = 10.0;
