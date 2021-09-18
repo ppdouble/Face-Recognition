@@ -5,9 +5,9 @@
 #include <opencv2/face.hpp>
 
 // Relative coordinates for haarcascade_lefteye_2splits.xml
-#define EYE_SX 0.12
-#define EYE_SY 0.17
-#define EYE_SW 0.37
+#define EYE_SX 0.10
+#define EYE_SY 0.19
+#define EYE_SW 0.40
 #define EYE_SH 0.36
 
 class loadFacePoints;
@@ -23,6 +23,39 @@ double getSimilarity (const Mat A, const Mat B) {
     return similarity;
 
 }
+Mat converttoGray(Mat newImg) {
+    Mat gray;
+    if (newImg.channels() == 3) {
+        cvtColor(newImg, gray, COLOR_BGR2GRAY);   // for 3 channel RGB
+    } else if (newImg.channels() == 4) {
+        cvtColor(newImg, gray, COLOR_BGR2GRAY);   // for 4 channel RGBA
+    } else {
+        gray = newImg; // directly
+    }
+    return gray;
+}
+void enlargeImg (Mat img, std::vector<Rect> &objvector, const int DETECTION_WIDTH, int scale) {
+    if (img.cols > DETECTION_WIDTH) {
+        objvector[0].x = cvRound(objvector[0].x * scale);
+        objvector[0].y = cvRound(objvector[0].y * scale);
+        objvector[0].width = cvRound(objvector[0].width * scale);
+        objvector[0].height = cvRound(objvector[0].height * scale);
+    }
+    if (objvector[0].x < 0) {
+        objvector[0].x = 0;
+    }
+    if (objvector[0].y < 0) {
+        objvector[0].y = 0;
+    }
+    if (objvector[0].x + objvector[0].width > img.cols) {
+        objvector[0].x = img.cols - objvector[0].width;
+    }
+    if (objvector[0].y + objvector[0].height > img.rows) {
+        objvector[0].y = img.rows - objvector[0].height;
+    }
+}
+
+
 int main( int argc, char** argv )
 {
     // face detect
@@ -59,13 +92,7 @@ int main( int argc, char** argv )
     imshow("ddd", img);
     waitKey(0);
      */
-    if (img.channels() == 3) {
-        cvtColor(img, gray, COLOR_BGR2GRAY);   // for 3 channel RGB
-    } else if (img.channels() == 4) {
-        cvtColor(img, gray, COLOR_BGR2GRAY);   // for 4 channel RGBA
-    } else {
-        gray = img; // directly
-    }
+    gray = converttoGray(img);
     // shrink resize
     const int DETECTION_WIDTH = 320;
     Mat smallImg;
@@ -116,39 +143,22 @@ int main( int argc, char** argv )
     Mat faceImg = equalizedImg(facesRectvector[0]);
     imshow("normal process detected face", faceImg);
     waitKey(0);
-    imshow("detected face area by original", img(facesRectvector[0]));
-    waitKey(0);
-/*
+
     // how to enlarge
-    std::vector<Rect> objects;  // only one image
-    objects = facesRectvector;
-    if (img.cols > DETECTION_WIDTH) {
-        objects[0].x = cvRound(objects[0].x * scale);
-        objects[0].y = cvRound(objects[0].y * scale);
-        objects[0].width = cvRound(objects[0].width * scale);
-        objects[0].height = cvRound(objects[0].height * scale);
-    }
-    if (objects[0].x < 0) {
-        objects[0].x = 0;
-    }
-    if (objects[0].y < 0) {
-        objects[0].y = 0;
-    }
-    if (objects[0].x + objects[0].width > img.cols) {
-        objects[0].x = img.cols - objects[0].width;
-    }
-    if (objects[0].y + objects[0].height > img.rows) {
-        objects[0].y = img.rows - objects[0].height;
-    }
+    std::vector<Rect> objvector;  // only one image
+    objvector = facesRectvector;
+    enlargeImg (img, objvector, DETECTION_WIDTH, scale);
+    Mat newImg = img(objvector[0]);
+    imshow("enlarge", newImg);
+    waitKey(0);
+    // convert to gray again
+    gray = converttoGray(newImg);
 
-    imshow("no resize enlarge", img(objects[0]));
+    imshow("enlarge2", gray);
     waitKey(0);
 
-    Mat faceImg;
-    resize(equalizedImg, faceImg, Size(objects[0].width, objects[0].height));
-    imshow("resize enlarge", faceImg);
-    waitKey(0);
-*/
+    faceImg = gray;
+
     // Face preprocessing
     // Eye detect
     // search Region of left eye and right eye
@@ -163,9 +173,9 @@ int main( int argc, char** argv )
 
 
     CascadeClassifier eyeDetectorleft1, eyeDetectorright1;
-    std::string eyeCascadeFilenameL1 = "/opt/opencv/share/opencv4/haarcascades/haarcascade_lefteye_2splits.xml";
+    std::string eyeCascadeFilenameL1 = "/opt/opencv/share/opencv4/haarcascades/haarcascade_eye.xml";
     //std::string eyeCascadeFilename2 = "/opt/opencv/share/opencv4/lbpcascades/lbpcascade_frontalface_improved.xml";
-    std::string eyeCascadeFilenameR1 = "/opt/opencv/share/opencv4/haarcascades/haarcascade_righteye_2splits.xml";
+    std::string eyeCascadeFilenameR1 = "/opt/opencv/share/opencv4/haarcascades/haarcascade_eye_tree_eyeglasses.xml";
     //std::string eyeCascadeFilename4 = "/opt/opencv/share/opencv4/lbpcascades/lbpcascade_frontalface_improved.xml";
     // left detector
     try {
@@ -196,7 +206,7 @@ int main( int argc, char** argv )
     //eyeDetectorleft1.detectMultiScale(topLeftOfFace, leftEyeRect);
     minNeighbors = 1;
     eyeDetectorleft1.detectMultiScale(faceImg, leftEyeRect, searchScaleFactor, minNeighbors, flags, minFeatureSize);
-    eyeDetectorright1.detectMultiScale(faceImg, rightEyeRect, searchScaleFactor, minNeighbors, flags, minFeatureSize);
+    eyeDetectorleft1.detectMultiScale(faceImg, rightEyeRect, searchScaleFactor, minNeighbors, flags, minFeatureSize);
 
     Point leftEye = Point(-1, -1);
     if (leftEyeRect[0].width > 0) {
@@ -205,7 +215,7 @@ int main( int argc, char** argv )
     }
     Point rightEye = Point(-1, -1);
     if (rightEyeRect[0].width > 0) {
-        rightEye.x = rightEyeRect[0].x + rightEyeRect[0].width/2 + leftX;
+        rightEye.x = rightEyeRect.at(0).x + rightEyeRect[0].width/2 + leftX;
         rightEye.y = rightEyeRect[0].y + rightEyeRect[0].width/2 + topY;
     }
     if (leftEye.x >= 0 && rightEye.x >=0) {
@@ -214,7 +224,7 @@ int main( int argc, char** argv )
         std::cout << "Failed to detect eyes" << std::endl;
         exit(-1);
     }
-    imshow("lefteye", faceImg(leftEyeRect[0]));
+    imshow("lefteye", faceImg(leftEyeRect.at(0)));
     imshow("righteye", faceImg(rightEyeRect[0]));
     waitKey(0);
 
